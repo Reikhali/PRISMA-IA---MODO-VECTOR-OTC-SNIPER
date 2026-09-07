@@ -1,4 +1,4 @@
-import { AssetPair, Candle, BrokerSession } from '../types';
+import { AssetPair, Candle, BrokerSession, SignalDirection, AccountMode, BrokerExecutionResult } from '../types';
 
 export const DEFAULT_BROKER_SESSION: BrokerSession = {
   ssid: '7dc3a31ffc42510e010d966c061b431d',
@@ -179,6 +179,61 @@ class BrokerStreamService {
     this.notifyAccount();
     this.notifyStatus();
     return { ...this.session };
+  }
+
+  public async executeOption(params: {
+    activeId: number;
+    direction: SignalDirection;
+    amount: number;
+    accountMode?: AccountMode;
+    expired?: number;
+    userBalanceId?: number;
+    profitPercent?: number;
+  }): Promise<BrokerExecutionResult> {
+    const targetMode = params.accountMode || this.session.accountMode;
+    try {
+      const res = await fetch('/api/otc/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ssid: this.session.ssid,
+          activeId: params.activeId,
+          direction: params.direction.toLowerCase(),
+          amount: params.amount,
+          accountMode: targetMode,
+          expired: params.expired,
+          userBalanceId: params.userBalanceId,
+          profitPercent: params.profitPercent,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Refresh account balance in background
+        this.fetchAccount().catch(() => {});
+        return {
+          success: true,
+          optionId: data.option_id,
+          activeId: data.active_id,
+          direction: data.direction,
+          amount: data.amount,
+          expired: data.expired,
+          userBalanceId: data.user_balance_id,
+          accountMode: data.account_mode,
+          message: data.message,
+        };
+      } else {
+        return {
+          success: false,
+          error: data.error || 'Falha ao executar ordem na corretora OPTGO.',
+        };
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message || 'Erro de conexão com o servidor da corretora.',
+      };
+    }
   }
 
   public subscribe(

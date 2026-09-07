@@ -1,5 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AssetPair, BullBearAnalysis, Candle, ServerNode, SignalDirection, SniperSignal, Timeframe, TradeOrder, BrokerSession, AccountMode, MartingaleMode } from './types';
+import { 
+  AssetPair, 
+  BullBearAnalysis, 
+  Candle, 
+  ServerNode, 
+  SignalDirection, 
+  SniperSignal, 
+  Timeframe, 
+  TradeOrder, 
+  BrokerSession, 
+  AccountMode, 
+  MartingaleMode,
+  BrokerExecutionMode,
+  BrokerExecutionResult
+} from './types';
 import { 
   ASSET_PAIRS, 
   INITIAL_SERVERS, 
@@ -39,6 +53,27 @@ export default function App() {
   // Real / Demo Broker Session (SSID and Balances)
   const [session, setSession] = useState<BrokerSession>(() => brokerStream.getSession());
   const [ssidModalOpen, setSsidModalOpen] = useState<boolean>(false);
+
+  // Broker Direct Execution Mode ('OFF' | 'DEMO' | 'REAL')
+  const [brokerExecutionMode, setBrokerExecutionMode] = useState<BrokerExecutionMode>(() => {
+    try {
+      const saved = localStorage.getItem('optgo_execution_mode');
+      if (saved === 'OFF' || saved === 'DEMO' || saved === 'REAL') return saved;
+    } catch {}
+    return 'DEMO';
+  });
+
+  // Auto-Trade: Automatic order execution when Prisma IA / Vector signals trigger
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('optgo_autotrade_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [isExecutingBroker, setIsExecutingBroker] = useState<boolean>(false);
+  const [lastBrokerResult, setLastBrokerResult] = useState<BrokerExecutionResult | null>(null);
 
   // Bulls vs Bears Analysis State
   const [bullBear, setBullBear] = useState<BullBearAnalysis>(() => calcBullBear(candles));
@@ -112,6 +147,56 @@ export default function App() {
     } catch {}
   };
 
+  const [tradeAmount, setTradeAmount] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('optgo_trade_amount');
+      if (saved) {
+        const parsed = parseFloat(saved);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+    } catch {}
+    return session.currency === 'BRL' ? 10 : 5;
+  });
+
+  const tradeAmountRef = useRef(tradeAmount);
+  tradeAmountRef.current = tradeAmount;
+
+  const handleTradeAmountChange = (amt: number) => {
+    setTradeAmount(amt);
+    try {
+      localStorage.setItem('optgo_trade_amount', String(amt));
+    } catch {}
+  };
+
+  const handleToggleCurrency = (currency: 'USD' | 'BRL') => {
+    const updated = brokerStream.updateSession({ currency });
+    setSession(updated);
+    try {
+      localStorage.setItem('optgo_currency', currency);
+    } catch {}
+    const min = currency === 'BRL' ? 5 : 1;
+    if (tradeAmountRef.current < min) {
+      handleTradeAmountChange(min);
+    }
+  };
+
+  const handleToggleBrokerExecutionMode = (mode: BrokerExecutionMode) => {
+    setBrokerExecutionMode(mode);
+    try {
+      localStorage.setItem('optgo_execution_mode', mode);
+    } catch {}
+  };
+
+  const handleToggleAutoTrade = (enabled: boolean) => {
+    setAutoTradeEnabled(enabled);
+    try {
+      localStorage.setItem('optgo_autotrade_enabled', String(enabled));
+    } catch {}
+    if (enabled) {
+      sound.playBeep();
+    }
+  };
+
   // Daily Real Statistics (Strictly audited from actual signals and orders)
   const stats = React.useMemo(() => {
     const allSignals = signalHistory.filter((s) => s.status === 'WIN' || s.status === 'LOSS');
@@ -133,7 +218,7 @@ export default function App() {
     return { wins, losses, winrate };
   }, [signalHistory, recentOrders, martingaleMode]);
 
-  // Keep latest refs for interval loop
+  // Keep latest refs for interval loop & async callbacks (prevents closure staleness)
   const martingaleModeRef = useRef(martingaleMode);
   martingaleModeRef.current = martingaleMode;
 
@@ -148,6 +233,15 @@ export default function App() {
 
   const activeSignalRef = useRef(activeSignal);
   activeSignalRef.current = activeSignal;
+
+  const brokerExecutionModeRef = useRef(brokerExecutionMode);
+  brokerExecutionModeRef.current = brokerExecutionMode;
+
+  const autoTradeEnabledRef = useRef(autoTradeEnabled);
+  autoTradeEnabledRef.current = autoTradeEnabled;
+
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   const nextSignalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -287,6 +381,12 @@ export default function App() {
         } else {
           sound.playPutSound();
         }
+
+        // AUTO-TRADE: Se ativado, executa automaticamente na corretora (DEMO ou REAL)
+        if (autoTradeEnabledRef.current) {
+          const entryVal = Math.max(sessionRef.current.currency === 'BRL' ? 5 : 1, tradeAmountRef.current);
+          handlePlaceTrade(newSig.direction, entryVal);
+        }
       }
     }
   }, [candles, currentAsset, timeframe]);
@@ -372,6 +472,12 @@ export default function App() {
       sound.playPutSound();
     }
 
+    // AUTO-TRADE: Se ativado, executa automaticamente na corretora (DEMO ou REAL)
+    if (autoTradeEnabledRef.current) {
+      const entryVal = Math.max(sessionRef.current.currency === 'BRL' ? 5 : 1, tradeAmountRef.current);
+      handlePlaceTrade(sig.direction, entryVal);
+    }
+
     return {
       success: true,
       title: `⚡ SINAL DE ${isCall ? 'COMPRA (CALL)' : 'VENDA (PUT)'} LIBERADO`,
@@ -416,6 +522,12 @@ export default function App() {
                   }
                 : prev
             );
+
+            // AUTO-TRADE: Se o auto-trade estiver ligado, executa a entrada do Martingale G1 na corretora
+            if (autoTradeEnabledRef.current) {
+              const entryVal = Math.max(sessionRef.current.currency === 'BRL' ? 5 : 1, tradeAmountRef.current) * 2;
+              handlePlaceTrade(current.direction, entryVal);
+            }
             return;
           }
 
@@ -463,32 +575,81 @@ export default function App() {
     };
   }, []);
 
-  // Handle trade placement with 100% REAL price evaluation
-  const handlePlaceTrade = (direction: SignalDirection, amount: number) => {
-    const currentBal = session.accountMode === 'REAL' ? session.realBalance : session.demoBalance;
-    if (amount > currentBal) return;
+  // Handle trade placement with 100% REAL broker execution or simulation
+  const handlePlaceTrade = async (direction: SignalDirection, amount: number) => {
+    const currentMode = brokerExecutionModeRef.current;
+    const currentSess = sessionRef.current;
+    const isReal = currentMode === 'REAL' || (currentMode === 'OFF' && currentSess.accountMode === 'REAL');
+    const availableBal = isReal ? currentSess.realBalance : currentSess.demoBalance;
 
-    // Deduct from current balance
-    const updatedSession = session.accountMode === 'REAL'
-      ? brokerStream.updateSession({ realBalance: +(session.realBalance - amount).toFixed(2) })
-      : brokerStream.updateSession({ demoBalance: +(session.demoBalance - amount).toFixed(2) });
+    // Validação estrita do valor mínimo: USD = $1, BRL = R$ 5
+    const minAmount = currentSess.currency === 'BRL' ? 5 : 1;
+    if (amount < minAmount) {
+      sound.playError();
+      return;
+    }
+
+    if (amount > availableBal && currentMode !== 'OFF') {
+      sound.playError();
+      return;
+    }
+
+    // Deduct from current balance locally immediately for snappy UX
+    const updatedSession = isReal
+      ? brokerStream.updateSession({ realBalance: +(currentSess.realBalance - amount).toFixed(2) })
+      : brokerStream.updateSession({ demoBalance: +(currentSess.demoBalance - amount).toFixed(2) });
     setSession(updatedSession);
 
     const entryPrice = currentPriceRef.current;
     const newOrder: TradeOrder = {
       id: `ord-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-      assetName: currentAsset.name,
+      assetName: currentAssetRef.current.name,
       direction,
       amount,
       entryPrice,
-      payout: currentAsset.payout,
-      timeframe,
+      payout: currentAssetRef.current.payout,
+      timeframe: timeframeRef.current,
       timestamp: Date.now(),
       status: 'OPEN',
-      accountMode: session.accountMode,
+      accountMode: isReal ? 'REAL' : 'DEMO',
+      executedOnBroker: currentMode !== 'OFF',
     };
 
     setRecentOrders((prev) => [newOrder, ...prev]);
+
+    // If Broker Execution is active (DEMO or REAL), send order directly to OptGo Quadcode WebSocket
+    if (currentMode !== 'OFF') {
+      setIsExecutingBroker(true);
+      try {
+        const result = await brokerStream.executeOption({
+          activeId: currentAssetRef.current.activeId || 76,
+          direction,
+          amount,
+          accountMode: currentMode === 'REAL' ? 'REAL' : 'DEMO',
+          profitPercent: currentAssetRef.current.payout,
+        });
+        setIsExecutingBroker(false);
+        setLastBrokerResult(result);
+        if (result.success) {
+          sound.playBeep();
+          setRecentOrders((prev) =>
+            prev.map((ord) =>
+              ord.id === newOrder.id
+                ? { ...ord, brokerOptionId: result.optionId, executedOnBroker: true }
+                : ord
+            )
+          );
+        } else {
+          sound.playError();
+        }
+      } catch (err: any) {
+        setIsExecutingBroker(false);
+        setLastBrokerResult({
+          success: false,
+          error: err.message || 'Erro de comunicação com a corretora',
+        });
+      }
+    }
 
     // Resolução 100% REAL baseada na cotação real do ativo ao expirar a ordem
     setTimeout(() => {
@@ -496,12 +657,12 @@ export default function App() {
       const isCall = direction === 'CALL';
       const isWin = isCall ? exitPrice > entryPrice : exitPrice < entryPrice;
       const isTie = exitPrice === entryPrice;
-      const profit = isWin ? +(amount * (currentAsset.payout / 100)).toFixed(2) : 0;
+      const profit = isWin ? +(amount * (currentAssetRef.current.payout / 100)).toFixed(2) : 0;
 
       if (isWin) {
         sound.playWinChime();
         setSession((prevS) => {
-          const newBal = prevS.accountMode === 'REAL'
+          const newBal = isReal
             ? { realBalance: +(prevS.realBalance + amount + profit).toFixed(2) }
             : { demoBalance: +(prevS.demoBalance + amount + profit).toFixed(2) };
           return brokerStream.updateSession(newBal);
@@ -509,7 +670,7 @@ export default function App() {
       } else if (isTie) {
         // Empate: estorna o valor investido
         setSession((prevS) => {
-          const newBal = prevS.accountMode === 'REAL'
+          const newBal = isReal
             ? { realBalance: +(prevS.realBalance + amount).toFixed(2) }
             : { demoBalance: +(prevS.demoBalance + amount).toFixed(2) };
           return brokerStream.updateSession(newBal);
@@ -528,6 +689,11 @@ export default function App() {
             : ord
         )
       );
+
+      // Sincroniza saldo oficial com a corretora OPTGO
+      if (currentMode !== 'OFF') {
+        brokerStream.fetchAccount().then((acc) => setSession(acc)).catch(() => {});
+      }
     }, 8000);
   };
 
@@ -578,7 +744,7 @@ export default function App() {
               currentPrice={currentPrice}
               bullBear={bullBear}
               signal={activeSignal}
-              onExecuteTrade={(dir) => handlePlaceTrade(dir, 50)}
+              onExecuteTrade={(dir) => handlePlaceTrade(dir, Math.max(session.currency === 'BRL' ? 5 : 1, tradeAmount))}
               onClose={() => setIsFloatingOpen(false)}
               dailyWinRate={stats.winrate}
               onSimulateTrigger={handleSimulateTrigger}
@@ -594,9 +760,18 @@ export default function App() {
           timeframe={timeframe}
           session={session}
           onToggleAccountMode={handleToggleAccountMode}
+          onToggleCurrency={handleToggleCurrency}
+          brokerExecutionMode={brokerExecutionMode}
+          onToggleBrokerExecutionMode={handleToggleBrokerExecutionMode}
+          autoTradeEnabled={autoTradeEnabled}
+          onToggleAutoTrade={handleToggleAutoTrade}
+          isExecutingBrokerOrder={isExecutingBroker}
+          lastBrokerResult={lastBrokerResult}
           onPlaceTrade={handlePlaceTrade}
           recentOrders={recentOrders}
           onOpenSsidModal={() => setSsidModalOpen(true)}
+          tradeAmount={tradeAmount}
+          onChangeTradeAmount={handleTradeAmountChange}
         />
       </div>
 

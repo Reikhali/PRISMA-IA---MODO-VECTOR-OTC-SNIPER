@@ -69,6 +69,20 @@ export interface ServerNode {
 }
 
 export type AccountMode = 'REAL' | 'DEMO';
+export type BrokerExecutionMode = 'OFF' | 'DEMO' | 'REAL';
+
+export interface BrokerExecutionResult {
+  success: boolean;
+  optionId?: number | string;
+  activeId?: number;
+  direction?: string;
+  amount?: number;
+  expired?: number;
+  userBalanceId?: number;
+  accountMode?: AccountMode;
+  message?: string;
+  error?: string;
+}
 
 export interface BrokerSession {
   ssid: string;
@@ -85,6 +99,10 @@ export interface BrokerSession {
   userName?: string;
   currency?: string;
   userId?: number | string;
+  realBalanceId?: number;
+  demoBalanceId?: number;
+  brokerExecutionMode?: BrokerExecutionMode;
+  autoTradeEnabled?: boolean;
 }
 
 export interface TradeOrder {
@@ -100,4 +118,6 @@ export interface TradeOrder {
   status: 'OPEN' | 'WON' | 'LOST';
   profit?: number;
   accountMode?: AccountMode;
+  brokerOptionId?: number | string;
+  executedOnBroker?: boolean;
 }
