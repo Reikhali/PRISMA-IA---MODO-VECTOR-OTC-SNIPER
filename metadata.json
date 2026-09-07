@@ -1,0 +1,6 @@
+{
+  "name": "Prisma IA Modo Vector-OTC",
+  "description": "Traderoom profissional Prisma IA Modo Vector-OTC com painel flutuante cyber-verde Quotex Radar, motor Touros vs Ursos, cotações e histórico 100% real conectado via SSL à OptGo Broker.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
