@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { AssetPair, Candle, SniperSignal, Timeframe } from '../types';
+import { AssetPair, Candle, SniperSignal, Timeframe, EagleEyeAnalysis, SocialSentiment, OtcManipulationAnalysis, PredictiveZones } from '../types';
 import { calculateEMA, calculateBollingerBands } from '../utils/marketData';
-import { ZoomIn, ZoomOut, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { ZoomIn, ZoomOut, Eye, EyeOff, ShieldCheck, AlertTriangle, Users, Crosshair } from 'lucide-react';
 
 interface ChartCanvasProps {
   asset: AssetPair;
@@ -9,6 +9,17 @@ interface ChartCanvasProps {
   timeframe: Timeframe;
   activeSignal: SniperSignal | null;
   currentPrice: number;
+  eagleEye?: EagleEyeAnalysis;
+  social?: SocialSentiment;
+  otc?: OtcManipulationAnalysis;
+  predictiveZones?: PredictiveZones;
+  lastTradeResult?: {
+    direction: 'CALL' | 'PUT';
+    result: 'WIN' | 'LOSS';
+    entryPrice: number;
+    exitPrice: number;
+    timestamp: number;
+  } | null;
 }
 
 export const ChartCanvas: React.FC<ChartCanvasProps> = ({
@@ -17,6 +28,11 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
   timeframe,
   activeSignal,
   currentPrice,
+  eagleEye,
+  social,
+  otc,
+  predictiveZones,
+  lastTradeResult,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,6 +44,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
 
   const [visibleCount, setVisibleCount] = useState(48);
   const [showIndicators, setShowIndicators] = useState(true);
+  const [showPredictiveOverlay, setShowPredictiveOverlay] = useState(true);
   const [candleCountdown, setCandleCountdown] = useState(() => 60 - new Date().getSeconds());
 
   useEffect(() => {
@@ -57,7 +74,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
 
     resizeObserver.observe(container);
     return () => resizeObserver.disconnect();
-  }, [candles, currentPrice, visibleCount, showIndicators, activeSignal]);
+  }, [candles, currentPrice, visibleCount, showIndicators, showPredictiveOverlay, activeSignal, eagleEye, social, otc, predictiveZones, lastTradeResult]);
 
   const drawChart = () => {
     const canvas = canvasRef.current;
@@ -75,6 +92,26 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
     // Dark sleek background
     ctx.fillStyle = '#020504';
     ctx.fillRect(0, 0, width, height);
+
+    // 3. HEATMAP DE PROBABILIDADE PREDITIVA DE FUNDO (Visual Overlay)
+    if (showPredictiveOverlay && predictiveZones) {
+      const grad = ctx.createLinearGradient(0, 0, 0, height);
+      if (predictiveZones.heatmapColor === 'green') {
+        grad.addColorStop(0, 'rgba(0, 255, 102, 0.07)');
+        grad.addColorStop(0.5, 'rgba(0, 255, 102, 0.02)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      } else if (predictiveZones.heatmapColor === 'yellow') {
+        grad.addColorStop(0, 'rgba(255, 230, 0, 0.06)');
+        grad.addColorStop(0.5, 'rgba(255, 230, 0, 0.02)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      } else {
+        grad.addColorStop(0, 'rgba(255, 51, 85, 0.09)');
+        grad.addColorStop(0.5, 'rgba(255, 51, 85, 0.03)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, width, height);
+    }
 
     // Subtle tactical grid background
     ctx.lineWidth = 1;
@@ -114,6 +151,12 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
       if (c.volume > maxVolume) maxVolume = c.volume;
     }
 
+    // Inclui zonas preditivas no autoscaling se visíveis
+    if (showPredictiveOverlay && predictiveZones) {
+      minPrice = Math.min(minPrice, predictiveZones.stopLossPrice, predictiveZones.takeProfitPrice);
+      maxPrice = Math.max(maxPrice, predictiveZones.stopLossPrice, predictiveZones.takeProfitPrice);
+    }
+
     // Add padding to price range
     const pricePadding = (maxPrice - minPrice) * 0.12 || 0.001;
     minPrice -= pricePadding;
@@ -131,6 +174,40 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
     const getY = (price: number) => {
       return chartHeight - ((price - minPrice) / priceRange) * chartHeight;
     };
+
+    // 3.1 PROJEÇÃO VISUAL DE TAKE PROFIT E STOP LOSS (Visual Overlay)
+    if (showPredictiveOverlay && predictiveZones) {
+      const tpY = getY(predictiveZones.takeProfitPrice);
+      const slY = getY(predictiveZones.stopLossPrice);
+      const curY = getY(currentPrice);
+
+      // Caixa de Projeção Take Profit (Verde)
+      const tpTop = Math.min(tpY, curY);
+      const tpHeight = Math.max(4, Math.abs(tpY - curY));
+      ctx.fillStyle = 'rgba(0, 255, 102, 0.08)';
+      ctx.fillRect(chartWidth - 220, tpTop, 220, tpHeight);
+      ctx.strokeStyle = 'rgba(0, 255, 102, 0.6)';
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(chartWidth - 220, tpTop, 220, tpHeight);
+
+      // Caixa de Projeção Stop Loss (Vermelho)
+      const slTop = Math.min(slY, curY);
+      const slHeight = Math.max(4, Math.abs(slY - curY));
+      ctx.fillStyle = 'rgba(255, 51, 85, 0.08)';
+      ctx.fillRect(chartWidth - 220, slTop, 220, slHeight);
+      ctx.strokeStyle = 'rgba(255, 51, 85, 0.6)';
+      ctx.strokeRect(chartWidth - 220, slTop, 220, slHeight);
+      ctx.setLineDash([]);
+
+      // Rótulos do Overlay Preditivo
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.fillStyle = '#00ff66';
+      ctx.textAlign = 'right';
+      ctx.fillText(`🎯 ALVO TP: ${predictiveZones.takeProfitPrice.toFixed(asset.decimals)}`, chartWidth - 8, tpY - 4);
+
+      ctx.fillStyle = '#ff3355';
+      ctx.fillText(`🛡️ STOP LOSS: ${predictiveZones.stopLossPrice.toFixed(asset.decimals)}`, chartWidth - 8, slY + 12);
+    }
 
     // Draw Price Levels & Horizontal Guidelines
     ctx.font = '10px JetBrains Mono, monospace';
@@ -289,6 +366,36 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
       ctx.fillRect(x - candleBodyWidth / 2, bodyTop, candleBodyWidth, bodyHeight);
     });
 
+    // 3.2 FEEDBACK PÓS-TRADE (Marcador Visual Histórico de Aprendizado)
+    if (lastTradeResult) {
+      const isWin = lastTradeResult.result === 'WIN';
+      const entryY = getY(lastTradeResult.entryPrice);
+      ctx.save();
+      ctx.strokeStyle = isWin ? '#00ff66' : '#ff3355';
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(0, entryY);
+      ctx.lineTo(chartWidth, entryY);
+      ctx.stroke();
+
+      // Tag de Pós-Trade no gráfico
+      ctx.fillStyle = isWin ? 'rgba(0, 255, 102, 0.2)' : 'rgba(255, 51, 85, 0.2)';
+      ctx.fillRect(chartWidth - 170, entryY - 10, 160, 20);
+      ctx.strokeStyle = isWin ? '#00ff66' : '#ff3355';
+      ctx.setLineDash([]);
+      ctx.strokeRect(chartWidth - 170, entryY - 10, 160, 20);
+
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.fillStyle = isWin ? '#00ff66' : '#ff3355';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `ÚLTIMO TRADE: ${isWin ? 'WIN ✅' : 'LOSS ❌'} (${lastTradeResult.direction})`,
+        chartWidth - 90,
+        entryY + 4
+      );
+      ctx.restore();
+    }
+
     // Draw Active Sniper Signal Indicator on chart if applicable
     if (activeSignal && activeSignal.assetId === asset.id) {
       const lastCandleX = (visibleCandles.length - 1) * candleSlotWidth + candleSlotWidth / 2;
@@ -408,50 +515,101 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
   return (
     <div ref={containerRef} className="relative h-full w-full select-none overflow-hidden bg-[#020504]">
       {/* Chart Top Info Bar */}
-      <div className="absolute top-2 left-4 z-10 flex flex-wrap items-center gap-3 font-mono text-xs">
-        <div className="flex items-center gap-2 rounded-md bg-black/75 px-2.5 py-1 border border-white/10 backdrop-blur-sm">
-          <span className="font-extrabold text-white">{asset.name}</span>
-          <span className="text-[#00ff66] font-bold">{currentPrice.toFixed(asset.decimals)}</span>
-          <span className={`text-[10px] ${asset.change24h >= 0 ? 'text-[#00ff66]' : 'text-rose-400'}`}>
-            {asset.change24h >= 0 ? '▲ +' : '▼ '}{asset.change24h}%
-          </span>
-        </div>
-
-        {/* Live Candle Countdown */}
-        <div className="flex items-center gap-1.5 rounded-md bg-black/80 px-2.5 py-1 border border-[#00ff66]/30 backdrop-blur-sm text-[11px] text-zinc-300">
-          <span className="h-2 w-2 rounded-full bg-[#00ff66] animate-pulse" />
-          <span className="text-[#7a9587]">Vela:</span>
-          <strong className="text-[#00ff66] font-extrabold">00:{String(candleCountdown).padStart(2, '0')}s</strong>
-        </div>
-
-        {/* OptGo SSL feed badge */}
-        <div className="hidden md:flex items-center gap-1.5 rounded-md bg-black/80 px-2 py-1 border border-white/10 backdrop-blur-sm text-[10px] text-[#7a9587]">
-          <span className="text-[#00ff66]">●</span>
-          <span>OptGo Feed Real (SSL TLS 1.3)</span>
-        </div>
-
-        {/* Indicator legends */}
-        {showIndicators && (
-          <div className="hidden sm:flex items-center gap-2.5 rounded-md bg-black/75 px-2.5 py-1 border border-white/10 backdrop-blur-sm text-[10px]">
-            <span className="flex items-center gap-1 text-[#ffe600]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#ffe600]" /> EMA 9
-            </span>
-            <span className="flex items-center gap-1 text-[#00e5ff]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#00e5ff]" /> EMA 21
-            </span>
-            <span className="flex items-center gap-1 text-[#00ff66]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#00ff66]" /> Bollinger (20,2)
+      <div className="absolute top-2 left-4 right-4 z-10 flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-md bg-black/85 px-2.5 py-1 border border-white/10 backdrop-blur-sm">
+            <span className="font-extrabold text-white">{asset.name}</span>
+            <span className="text-[#00ff66] font-bold">{currentPrice.toFixed(asset.decimals)}</span>
+            <span className={`text-[10px] ${asset.change24h >= 0 ? 'text-[#00ff66]' : 'text-rose-400'}`}>
+              {asset.change24h >= 0 ? '▲ +' : '▼ '}{asset.change24h}%
             </span>
           </div>
-        )}
 
-        {hoverData && (
-          <div className="hidden lg:flex items-center gap-3 rounded-md bg-black/85 px-3 py-1 border border-[#00ff66]/30 text-[11px] text-zinc-300 backdrop-blur-md">
-            <span>A: <strong className="text-white">{hoverData.candle.open.toFixed(asset.decimals)}</strong></span>
-            <span>M: <strong className="text-[#00ff66]">{hoverData.candle.high.toFixed(asset.decimals)}</strong></span>
-            <span>B: <strong className="text-rose-400">{hoverData.candle.low.toFixed(asset.decimals)}</strong></span>
-            <span>F: <strong className="text-white">{hoverData.candle.close.toFixed(asset.decimals)}</strong></span>
-            <span>Vol: <strong className="text-zinc-200">{hoverData.candle.volume}</strong></span>
+          {/* Live Candle Countdown */}
+          <div className="flex items-center gap-1.5 rounded-md bg-black/85 px-2.5 py-1 border border-[#00ff66]/30 backdrop-blur-sm text-[11px] text-zinc-300">
+            <span className="h-2 w-2 rounded-full bg-[#00ff66] animate-pulse" />
+            <span className="text-[#7a9587]">Vela:</span>
+            <strong className="text-[#00ff66] font-extrabold">00:{String(candleCountdown).padStart(2, '0')}s</strong>
+          </div>
+
+          {/* 1. MÓDULO OLHO DE ÁGUIA BADGE */}
+          {eagleEye && (
+            <div
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 border backdrop-blur-sm text-[11px] font-bold transition ${
+                eagleEye.verdict === 'CLEAR'
+                  ? 'bg-[#00ff66]/10 border-[#00ff66]/40 text-[#00ff66]'
+                  : eagleEye.verdict === 'CAUTION'
+                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                  : 'bg-rose-500/15 border-rose-500/50 text-rose-300 animate-pulse'
+              }`}
+              title={eagleEye.notes.join(' | ')}
+            >
+              <Crosshair className="h-3.5 w-3.5 shrink-0" />
+              <span>Olho de Águia:</span>
+              <span>
+                {eagleEye.verdict === 'CLEAR'
+                  ? `Seguro (${eagleEye.safetyScore}%)`
+                  : eagleEye.verdict === 'CAUTION'
+                  ? `Atenção (${eagleEye.safetyScore}%)`
+                  : '⛔ ZONA TÓXICA'}
+              </span>
+            </div>
+          )}
+
+          {/* 2. RADAR SOCIAL BADGE */}
+          {social && (
+            <div
+              className={`hidden sm:flex items-center gap-1.5 rounded-md px-2 py-1 border backdrop-blur-sm text-[10px] font-bold ${
+                social.divergenceAlert
+                  ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                  : 'bg-black/80 border-white/15 text-zinc-300'
+              }`}
+              title={`Score Multidão: ${social.crowdScore}% Bullish | ${social.bearishScore}% Bearish`}
+            >
+              <Users className="h-3 w-3 text-cyan-400" />
+              <span>Social:</span>
+              <span className={social.crowdScore >= 50 ? 'text-[#00ff66]' : 'text-rose-400'}>
+                {social.crowdScore}% {social.bias}
+              </span>
+              {social.divergenceAlert && <span className="text-amber-400 font-black">(! Alerta)</span>}
+            </div>
+          )}
+
+          {/* 4. FILTRO ANTI-MANIPULAÇÃO OTC BADGE */}
+          {otc && (
+            <div
+              className={`hidden md:flex items-center gap-1.5 rounded-md px-2 py-1 border backdrop-blur-sm text-[10px] font-bold ${
+                otc.status === 'ORGANIC'
+                  ? 'bg-black/80 border-[#00ff66]/20 text-zinc-300'
+                  : otc.status === 'SUSPICIOUS'
+                  ? 'bg-amber-950/40 border-amber-500/30 text-amber-300'
+                  : 'bg-rose-950/50 border-rose-500/60 text-rose-300 animate-pulse'
+              }`}
+            >
+              <ShieldCheck className="h-3 w-3 text-[#00ff66]" />
+              <span>OTC:</span>
+              <span className={otc.isSafeToTrade ? 'text-[#00ff66]' : 'text-rose-400'}>
+                {otc.status === 'ORGANIC' ? 'Orgânico' : otc.status === 'SUSPICIOUS' ? 'Inconsistente' : 'Stop-Hunt'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Probabilidade Preditiva Unificada */}
+        {predictiveZones && (
+          <div className="flex items-center gap-1.5 rounded-md bg-black/90 px-3 py-1 border border-white/15 backdrop-blur-sm text-xs">
+            <span className="text-[#7a9587]">Probabilidade IA:</span>
+            <strong
+              className={`font-black ${
+                predictiveZones.heatmapColor === 'green'
+                  ? 'text-[#00ff66]'
+                  : predictiveZones.heatmapColor === 'yellow'
+                  ? 'text-amber-400'
+                  : 'text-rose-500'
+              }`}
+            >
+              {predictiveZones.probabilityScore}%
+            </strong>
           </div>
         )}
       </div>
@@ -489,6 +647,14 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
           title="Alternar Indicadores (EMA / Bollinger)"
         >
           {showIndicators ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+        </button>
+        <button
+          id="toggle-predictive-overlay-btn"
+          onClick={() => setShowPredictiveOverlay((s) => !s)}
+          className={`p-1.5 transition rounded ${showPredictiveOverlay ? 'text-cyan-400' : 'text-zinc-600'}`}
+          title="Alternar Desenho Preditivo (Take Profit, Stop Loss e Heatmap)"
+        >
+          <Crosshair className="h-4 w-4" />
         </button>
       </div>
     </div>

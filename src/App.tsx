@@ -30,6 +30,13 @@ import { BrokerOrderPanel } from './components/BrokerOrderPanel';
 import { ServerClusterModal } from './components/ServerClusterModal';
 import { SignalHistoryDrawer } from './components/SignalHistoryDrawer';
 import { SsidConnectionModal } from './components/SsidConnectionModal';
+import { AdvancedEnginesPanel } from './components/AdvancedEnginesPanel';
+import { 
+  analyzeEagleEye, 
+  getSocialSentiment, 
+  analyzeOtcManipulation, 
+  calculatePredictiveZones 
+} from './utils/advancedEngines';
 import { sound } from './utils/audio';
 import { 
   ShieldCheck, 

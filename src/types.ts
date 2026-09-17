@@ -26,6 +26,50 @@ export interface Candle {
   volume: number;
 }
 
+export interface EagleEyeAnalysis {
+  isValid: boolean;
+  verdict: 'CLEAR' | 'CAUTION' | 'BLOCKED';
+  rejectionWickDetected: boolean;
+  isToxicZone: boolean;
+  toxicZoneReason?: string;
+  threeCandleMomentum: 'STRONG' | 'EXHAUSTED' | 'NEUTRAL';
+  bodyRatioAverage: number;
+  safetyScore: number; // 0 - 100
+  notes: string[];
+}
+
+export interface SocialSentiment {
+  crowdScore: number; // 0 - 100 (Bullish bias %)
+  bearishScore: number; // 100 - crowdScore
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  activeSignalsDetected: number;
+  divergenceAlert: boolean; // Prisma vs Crowd divergence
+  sampleSources: {
+    channel: string;
+    text: string;
+    bias: 'CALL' | 'PUT';
+    timeAgo: string;
+  }[];
+}
+
+export interface OtcManipulationAnalysis {
+  status: 'ORGANIC' | 'SUSPICIOUS' | 'MANIPULATION_DETECTED';
+  stopHuntDetected: boolean;
+  tickJitterScore: number; // Regularity score
+  syntheticAnomalyRate: number; // %
+  isSafeToTrade: boolean;
+  warningMessage?: string;
+}
+
+export interface PredictiveZones {
+  takeProfitPrice: number;
+  stopLossPrice: number;
+  probabilityScore: number; // 0 - 100
+  heatmapColor: 'green' | 'yellow' | 'red';
+  structureLow: number;
+  structureHigh: number;
+}
+
 export interface BullBearAnalysis {
   bullPct: number;
   bearPct: number;
